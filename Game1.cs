@@ -11,13 +11,13 @@ namespace lighthouse
         public Vector2 Position;
         public float GrowthTimer = 0;
         public int Phase = 3;
-        public int Health = 3;
+        public int Health = 100;
         public void Update(float dt)
         {
             if (Phase < 3)
             {
                 GrowthTimer += dt;
-                if (GrowthTimer > 8f) { Phase++; GrowthTimer = 0; }
+                if (GrowthTimer > 40f) { Phase++; GrowthTimer = 0; }
             }
         }
     }
@@ -36,15 +36,19 @@ namespace lighthouse
 
         Vector2 _pPos = new Vector2(1000, 1000);
         int _wood = 0;
-        float _speed = 220f;
         float _energy = 100f;
         float _visualEnergy = 100f;
 
-        Vector2 _lPos = new Vector2(950, 920);
+        // Прогрессия (Прокачка)
+        int _points = 0;
+        int _lvlSpeed = 0, _lvlStr = 0, _lvlBag = 0;
+        int _costSpeed = 10, _costStr = 10, _costBag = 10;
 
+        Vector2 _lPos = new Vector2(950, 920);
         List<Tree> _trees = new List<Tree>();
         List<Drop> _drops = new List<Drop>();
         KeyboardState _oldK;
+        Random _rng = new Random();
 
         public Game1()
         {
@@ -55,15 +59,21 @@ namespace lighthouse
 
         protected override void Initialize()
         {
-            Random rng = new Random();
             for (int i = 0; i < 110; i++)
             {
-                float angle = (float)(rng.NextDouble() * Math.PI * 2);
-                float dist = (float)(rng.NextDouble() * (_islandRadius - 60));
-                Vector2 pos = _worldCenter + new Vector2((float)Math.Cos(angle) * dist, (float)Math.Sin(angle) * dist);
-
-                if (Vector2.Distance(pos, _lPos + new Vector2(50, 75)) > 250)
-                    _trees.Add(new Tree { Position = pos, Phase = 3 });
+                bool valid = false; Vector2 pos = Vector2.Zero;
+                int attempts = 0;
+                while (!valid && attempts < 100)
+                {
+                    attempts++;
+                    float angle = (float)(_rng.NextDouble() * Math.PI * 2);
+                    float dist = (float)(_rng.NextDouble() * (_islandRadius - 80));
+                    pos = _worldCenter + new Vector2((float)Math.Cos(angle) * dist, (float)Math.Sin(angle) * dist);
+                    valid = true;
+                    if (Vector2.Distance(pos, new Vector2(1000, 1000)) < 280) { valid = false; continue; }
+                    foreach (var t in _trees) if (Vector2.Distance(pos, t.Position) < 130) { valid = false; break; }
+                }
+                if (valid) _trees.Add(new Tree { Position = pos });
             }
             base.Initialize();
         }
@@ -81,18 +91,18 @@ namespace lighthouse
                 for (int x = 0; x < cSize; x++)
                 {
                     float dist = Vector2.Distance(new Vector2(x, y), new Vector2(cSize / 2));
-                    cData[y * cSize + x] = dist < (cSize / 2) ? Color.DarkGreen : Color.Transparent;
+                    cData[y * cSize + x] = dist < (cSize / 2) ? Color.DarkOliveGreen : Color.Transparent;
                 }
             _circleTex.SetData(cData);
 
-            int mSize = 3000;
+            int mSize = 2500;
             _visionMask = new Texture2D(GraphicsDevice, mSize, mSize);
             Color[] mData = new Color[mSize * mSize];
             for (int y = 0; y < mSize; y++)
                 for (int x = 0; x < mSize; x++)
                 {
                     float dist = Vector2.Distance(new Vector2(x, y), new Vector2(mSize / 2));
-                    float alpha = MathHelper.Clamp((dist - 120) / 450f, 0, 1);
+                    float alpha = MathHelper.Clamp((dist - 120) / 400f, 0, 1);
                     mData[y * mSize + x] = Color.Black * alpha;
                 }
             _visionMask.SetData(mData);
@@ -103,43 +113,55 @@ namespace lighthouse
             var k = Keyboard.GetState();
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
-            Vector2 nextPos = _pPos;
-            if (k.IsKeyDown(Keys.W)) nextPos.Y -= _speed * dt;
-            if (k.IsKeyDown(Keys.S)) nextPos.Y += _speed * dt;
-            if (k.IsKeyDown(Keys.A)) nextPos.X -= _speed * dt;
-            if (k.IsKeyDown(Keys.D)) nextPos.X += _speed * dt;
+            float currentSpeed = 200f + (_lvlSpeed * 40);
+            if (k.IsKeyDown(Keys.W)) _pPos.Y -= currentSpeed * dt;
+            if (k.IsKeyDown(Keys.S)) _pPos.Y += currentSpeed * dt;
+            if (k.IsKeyDown(Keys.A)) _pPos.X -= currentSpeed * dt;
+            if (k.IsKeyDown(Keys.D)) _pPos.X += currentSpeed * dt;
 
-            if (Vector2.Distance(nextPos, _worldCenter) < _islandRadius - 20)
-                _pPos = nextPos;
-
-            var screenCenter = new Vector2(_graphics.PreferredBackBufferWidth / 2, _graphics.PreferredBackBufferHeight / 2);
-            _cameraTransform = Matrix.CreateTranslation(-_pPos.X, -_pPos.Y, 0) * Matrix.CreateTranslation(screenCenter.X, screenCenter.Y, 0);
+            if (Vector2.Distance(_pPos, _worldCenter) > _islandRadius - 15)
+            {
+                Vector2 dir = _pPos - _worldCenter; dir.Normalize();
+                _pPos = _worldCenter + dir * (_islandRadius - 15);
+            }
+            var sC = new Vector2(_graphics.PreferredBackBufferWidth / 2, _graphics.PreferredBackBufferHeight / 2);
+            _cameraTransform = Matrix.CreateTranslation(-_pPos.X, -_pPos.Y, 0) * Matrix.CreateTranslation(sC.X, sC.Y, 0);
 
             if (k.IsKeyDown(Keys.Space) && _oldK.IsKeyUp(Keys.Space))
             {
                 foreach (var t in _trees)
                     if (t.Phase == 3 && Vector2.Distance(_pPos, t.Position) < 75)
                     {
-                        t.Health--;
-                        if (t.Health <= 0) { t.Phase = 0; t.Health = 3; _drops.Add(new Drop { Position = t.Position }); }
+                        t.Health -= (25 + _lvlStr * 25);
+                        if (t.Health <= 0)
+                        {
+                            t.Phase = 0; t.Health = 100;
+                            float angle = (float)(_rng.NextDouble() * Math.PI * 2);
+                            _drops.Add(new Drop { Position = t.Position + new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle)) * 60 });
+                        }
                         break;
                     }
             }
 
             for (int i = _drops.Count - 1; i >= 0; i--)
-                if (Vector2.Distance(_pPos, _drops[i].Position) < 45) { _wood++; _drops.RemoveAt(i); }
+                if (Vector2.Distance(_pPos, _drops[i].Position) < 45 && _wood < 5 + _lvlBag) { _wood++; _drops.RemoveAt(i); }
 
             foreach (var t in _trees) t.Update(dt);
 
-            if (Vector2.Distance(_pPos, _lPos + new Vector2(50, 75)) < 130 && _wood > 0 && k.IsKeyDown(Keys.E))
+            if (k.IsKeyDown(Keys.D1) && _oldK.IsKeyUp(Keys.D1) && _points >= _costSpeed) { _points -= _costSpeed; _lvlSpeed++; _costSpeed *= 2; }
+            if (k.IsKeyDown(Keys.D2) && _oldK.IsKeyUp(Keys.D2) && _points >= _costStr) { _points -= _costStr; _lvlStr++; _costStr *= 2; }
+            if (k.IsKeyDown(Keys.D3) && _oldK.IsKeyUp(Keys.D3) && _points >= _costBag) { _points -= _costBag; _lvlBag++; _costBag *= 2; }
+
+            if (Vector2.Distance(_pPos, new Vector2(1000, 1030)) < 130 && _wood > 0 && k.IsKeyDown(Keys.E))
             {
-                _energy = MathHelper.Clamp(_energy + (_wood * 20), 0, 100);
+                _energy = MathHelper.Clamp(_energy + (_wood * 15), 0, 100);
+                _points += _wood;
                 _wood = 0;
             }
 
-            _energy -= 3.8f * dt;
+            _energy -= 3.2f * dt;
             if (_energy < 0) _energy = 0;
-            _visualEnergy = MathHelper.Lerp(_visualEnergy, _energy, 2.5f * dt);
+            _visualEnergy = MathHelper.Lerp(_visualEnergy, _energy, 2.0f * dt);
 
             _oldK = k;
             base.Update(gameTime);
@@ -151,35 +173,44 @@ namespace lighthouse
 
             _spriteBatch.Begin(transformMatrix: _cameraTransform);
             _spriteBatch.Draw(_circleTex, Vector2.Zero, Color.White);
-            _spriteBatch.Draw(_pixel, new Rectangle((int)_lPos.X, (int)_lPos.Y, 100, 150), Color.Yellow);
-
+            _spriteBatch.Draw(_pixel, new Rectangle(950, 925, 100, 150), Color.Yellow);
             foreach (var t in _trees)
             {
                 Color c = Color.Lime; int s = 40;
                 if (t.Phase == 0) { c = Color.SaddleBrown; s = 15; }
                 else if (t.Phase == 1) { c = Color.LightGreen; s = 12; }
                 else if (t.Phase == 2) { c = Color.Green; s = 25; }
-                if (t.Phase == 3 && t.Health < 3) c = Color.White;
+                if (t.Phase == 3 && t.Health < 100) c = Color.White;
                 _spriteBatch.Draw(_pixel, new Rectangle((int)t.Position.X, (int)t.Position.Y, s, s), c);
             }
-            foreach (var d in _drops) _spriteBatch.Draw(_pixel, new Rectangle((int)d.Position.X, (int)d.Position.Y, 18, 18), Color.SaddleBrown);
+            foreach (var d in _drops) _spriteBatch.Draw(_pixel, new Rectangle((int)d.Position.X, (int)d.Position.Y, 18, 18), Color.BurlyWood);
             _spriteBatch.Draw(_pixel, new Rectangle((int)_pPos.X, (int)_pPos.Y, 32, 32), Color.White);
             _spriteBatch.End();
 
-            _spriteBatch.Begin();
-            float energyFactor = _visualEnergy / 100f;
-            float viewScale = (float)Math.Pow(energyFactor, 0.65f) * 5.5f + 0.35f;
-
-            Vector2 screenCenter = new Vector2(_graphics.PreferredBackBufferWidth / 2, _graphics.PreferredBackBufferHeight / 2);
-            _spriteBatch.Draw(_visionMask, screenCenter, null, Color.White, 0f, new Vector2(1500), viewScale, SpriteEffects.None, 0);
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend);
+            float energyPercent = _visualEnergy / 100f;
+            float vScale = (float)Math.Pow(energyPercent, 0.8) * 8.0f + 0.35f;
+            Vector2 sC = new Vector2(_graphics.PreferredBackBufferWidth / 2, _graphics.PreferredBackBufferHeight / 2);
+            _spriteBatch.Draw(_visionMask, sC, null, Color.White, 0f, new Vector2(1250), vScale, SpriteEffects.None, 0);
             _spriteBatch.End();
 
             _spriteBatch.Begin();
-            _spriteBatch.Draw(_pixel, new Rectangle(10, 10, 204, 24), Color.Black * 0.6f);
-            _spriteBatch.Draw(_pixel, new Rectangle(12, 12, (int)(_energy * 2), 20), Color.Orange);
             for (int i = 0; i < _wood; i++)
-                _spriteBatch.Draw(_pixel, new Rectangle(10 + (i * 15), 45, 12, 12), Color.SaddleBrown);
+                _spriteBatch.Draw(_pixel, new Rectangle(15 + (i * 18), 15, 14, 14), Color.BurlyWood);
+
+            DrawU(630, 10, Color.Blue, _lvlSpeed, _costSpeed, gameTime);
+            DrawU(685, 10, Color.Red, _lvlStr, _costStr, gameTime);
+            DrawU(740, 10, Color.SaddleBrown, _lvlBag, _costBag, gameTime);
             _spriteBatch.End();
+        }
+
+        void DrawU(int x, int y, Color c, int lvl, int cost, GameTime gt)
+        {
+            _spriteBatch.Draw(_pixel, new Rectangle(x, y, 45, 45), Color.Black * 0.6f);
+            float pulse = (float)Math.Sin(gt.TotalGameTime.TotalSeconds * 8) > 0 && _points >= cost ? 1.0f : 0.6f;
+            _spriteBatch.Draw(_pixel, new Rectangle(x + 2, y + 2, 41, 41), c * pulse);
+            for (int i = 0; i < lvl; i++) _spriteBatch.Draw(_pixel, new Rectangle(x + 5 + i * 7, y + 32, 4, 8), Color.White);
+            _spriteBatch.Draw(_pixel, new Rectangle(x, y + 42, 45, 3), _points >= cost ? Color.Lime : Color.Gray);
         }
     }
 }
